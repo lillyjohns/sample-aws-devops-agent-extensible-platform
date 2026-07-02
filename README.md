@@ -14,7 +14,7 @@
   <strong>One gateway. One catalog. One set of rules — for your first agent and your fiftieth.</strong>
 </p>
 
-> **Note:** This repository is currently a **design specification**. Implementation is planned — see [Roadmap](#roadmap). This will be a demo/sample application for learning purposes, not intended for production use.
+> **Note:** This repository is a work-in-progress sample. The platform core (Gateway + capability catalog + DevOps Agent binding) **deploys and is verified working** in `ap-northeast-1`; the PR agent and demo scenarios are in progress — see [Roadmap](#roadmap). Demo/sample application for learning purposes, not intended for production use.
 
 An extensible AI platform blueprint built on [AWS DevOps Agent](https://docs.aws.amazon.com/devopsagent/latest/userguide/what-is.html) and [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/), shipped with a complete **cost-optimization reference implementation**: DevOps Agent autonomously finds cost waste and remediates it via GitHub Pull Requests — with a human merge as the approval gate.
 
@@ -231,8 +231,8 @@ The full rationale lives in **[docs/DESIGN.md](docs/DESIGN.md)**:
 
 ## Roadmap
 
-- [ ] **M1 — Platform core:** manifest-driven `McpTargets` CDK construct, Gateway stack, DevOps Agent binding (`AgentSpace` + `Service`)
-- [ ] **M2 — Capability packs:** the five cost MCP targets (incl. awslabs reuse) + `external-repo` type with the OpenSearch pack
+- [x] **M1 — Platform core:** manifest-driven `Capabilities` CDK construct (synth-time governance validation), Gateway stack, DevOps Agent binding (`AgentSpace` + `Service` + `Association` with tool allowlist) — **deployed & verified in ap-northeast-1, 100% CloudFormation, zero console steps**
+- [ ] **M2 — Capability packs:** `find_cost_waste` ✅ and `generate_cost_report` ✅ (live, tested through the Gateway); remaining: awslabs reuse packaging (Cost Explorer, Pricing), `locate_iac_source`, OpenSearch endpoint wiring
 - [ ] **M3 — Remediation-PR Agent:** Strands on AgentCore Runtime, A2A registration, `cdk validate` integration
 - [ ] **M4 — Scenarios:** break/fix workload + Makefile + walkthrough docs
 - [ ] **M5 — Hardening:** custom resources for post-deploy steps, `examples/s3-storage-class`, optional AWS Agent Registry auto-publish, AWS-icon architecture diagram, cost estimate table

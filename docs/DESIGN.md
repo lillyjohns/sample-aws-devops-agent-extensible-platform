@@ -219,6 +219,17 @@ Caveats: preview service; publish step is likely a CFN custom resource calling t
 1. **Provisioning DevOps Agent via Terraform works** through the [AWS Cloud Control (`awscc`) provider](https://registry.terraform.io/providers/hashicorp/awscc/latest) — the `AWS::DevOpsAgent::*` types are in the CloudFormation registry, which `awscc` is generated from. The OAuth-service limitation and post-deploy steps carry over identically.
 2. **DevOps Agent reads Terraform** (repo learning, PR reviews on `.tf` diffs) but has no state-file/backend awareness today — which is exactly why `locate_iac_source` exists. The shipped resolver targets CDK; a Terraform resolver (HCL block lookup) is a natural community extension point in the same manifest.
 
+## Deployment findings (verified in ap-northeast-1, 2026-07-03)
+
+Hard-won facts from the first real deployment — all encoded in the CDK code:
+
+1. **DevOps Agent service principal is `aidevops.amazonaws.com`** (not devopsagent/devops-agent). The SigV4 invoke role needs it in the trust policy with confused-deputy conditions (`aws:SourceAccount` + `aws:SourceArn` on `arn:aws:aidevops:<region>:<account>:service/*`).
+2. **DevOps Agent negotiates MCP protocol 2025-03-26**; modern IDE clients use 2025-06-18. The Gateway must list **both** in `supportedVersions` — and that property is effectively **create-only** (changing it forces gateway replacement, which also changes the Gateway URL).
+3. **64-char combined name limit:** DevOps Agent enforces `len(mcpServerName + '_' + toolName) ≤ 64`. Keep the registered server name short (`gov-gw`) and budget tool names accordingly.
+4. **`AWS::DevOpsAgent::Association` requires a typed Configuration** — for the Gateway binding: `Configuration.MCPServerSigV4.Tools` = explicit per-Agent-Space tool allowlist (include `x_amz_bedrock_agentcore_search` so semantic discovery keeps working as capabilities are added).
+5. **The full chain is CloudFormation-able:** Gateway + targets + AgentSpace + Service (mcpserversigv4) + Association deployed with zero console steps. The Service resource validates the MCP connection at create time (it calls tools/list — a misconfigured Gateway fails the deploy, which is governance working in your favor).
+6. Gateway Lambda targets receive the tool name in `context.client_context.custom['bedrockAgentCoreToolName']` prefixed as `<targetName>___<toolName>`; clients must send the `MCP-Protocol-Version` header on post-initialize calls.
+
 ## Open items
 
 - [ ] Verify A2A delegation payload supports full finding context (resource ARNs, repo hints) or define a thin structured contract
