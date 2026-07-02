@@ -65,6 +65,28 @@ capabilities/
 
 Both types share the same lifecycle philosophy: manifest, owner, declared retirement condition, retirable by config.
 
+### Onboarding existing agents (`type: external-agent`)
+
+Teams that already run agents shouldn't have to rewrite or redeploy them to join the governed catalog. An A2A manifest with `type: external-agent` registers an agent you already operate as a delegation target for DevOps Agent:
+
+```yaml
+# capabilities/a2a/my-existing-agent/manifest.yaml
+name: my-existing-agent
+description: What DevOps Agent may delegate to this agent, and when
+type: external-agent          # vs type: runtime (deployed by this blueprint)
+enabled: false                # opt-in
+owner: team-y
+endpoint:
+  ssmParameter: /platform/a2a/my-existing-agent/endpoint
+auth: <its existing auth>
+scope: >                     # governance: what this agent is allowed to be asked to do
+  Delegated remediation of X only; no direct data access via this platform.
+retirement: >
+  Decommission if DevOps Agent gains native X.
+```
+
+The blueprint owns **registration and governance** (the manifest is the reviewed, auditable record of the agent's existence, owner, scope, and exit condition); the owning team keeps **build, deploy, and operations**. Same split as `external-repo` for MCP servers — together these are the "add-on path" for organizations with existing agent investments.
+
 ## Manifest schema
 
 ```yaml
@@ -160,6 +182,18 @@ Kiro/Claude → Gateway alone gets **raw tools only** — no DevOps Agent judgme
 - **Option 1 (simplest):** the IDE connects to *both* the Gateway (tools) and DevOps Agent's own headless MCP endpoint (judgment) — e.g. the Kiro power for AWS DevOps Agent.
 - **Option 2 (single endpoint):** register DevOps Agent's MCP endpoint as one more Gateway target (`start_investigation`, `get_investigation_status`) so the Gateway is the only connection the IDE needs. The *client's* LLM decides when to offload to DevOps Agent.
 
+## AWS Agent Registry integration (optional)
+
+The git-based `capabilities/` catalog is the **definition plane**: what exists, who owns it, what it may do, when it retires — versioned, reviewable, deployable. [AWS Agent Registry](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/registry.html) (preview) adds the **discovery plane**: an organization-wide, searchable catalog with an approval workflow, queryable by humans and agents (it exposes its own MCP endpoint).
+
+They compose rather than compete:
+
+- **Auto-publish on deploy** (optional, `cdk.json` flag, off by default): the same construct that scans manifests emits one registry record per enabled capability, plus records for the Gateway and the PR agent. The manifest stays the source of truth; the Registry is a *projection* of it
+- **Retirement propagates**: `enabled: false` → record deprecated — consumers *see* that a capability has been retired
+- Registry approval workflow can layer org-level curation on top of the git PR review
+
+Caveats: preview service; publish step is likely a CFN custom resource calling the Registry API (no guaranteed CFN types yet). Scheduled for M5.
+
 ## Decision log
 
 | Decision | Alternatives considered | Why |
@@ -175,6 +209,8 @@ Kiro/Claude → Gateway alone gets **raw tools only** — no DevOps Agent judgme
 | `capabilities/{mcp,a2a}/` — A2A as a first-class type | PR agent as a one-off under `agents/` | DevOps Agent's extension surface is exactly MCP + A2A; a platform sample should teach the *choice* between them, not just showcase one instance. |
 | Governance as docs + structural mechanisms, not machinery | Implementing policy engine, eval pipelines, multi-account governance | Pillars get pages, not pipelines. Manifest-as-policy + git-as-approval-workflow are real mechanisms; faking Cedar/evals in a sample would be worse than pointing at AgentCore Policy/Evaluations. See [GOVERNANCE.md](GOVERNANCE.md). |
 | OpenSearch as the external-repo example | Inventing a second toy domain | An [independently-deployed, working MCP server](https://github.com/lillyjohns/devopsagent-opensearch-mcp) proves the second-domain + external-repo story with zero new tool code. |
+| Governance-blueprint framing (start safe + grow governed + add-on path) | Pure extensibility framing | The customer blocker is fear of mixing agents in the environment, not lack of mechanism. Three personas: first agent, more agents coming, agents already running. `external-repo`/`external-agent` are the add-on path. |
+| AWS Agent Registry as optional discovery plane | Git catalog only; Registry as source of truth | Git owns definition (deployable, reviewable); Registry owns org-wide discovery. Auto-publish keeps them in sync; preview status keeps it optional. |
 
 ## Terraform notes
 

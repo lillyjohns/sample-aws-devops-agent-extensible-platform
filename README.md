@@ -1,6 +1,6 @@
-<h1 align="center">AWS DevOps Agent Extensible Platform</h1>
+<h1 align="center">AWS DevOps Agent Governance Blueprint</h1>
 
-<p align="center">An AI platform blueprint that grows by manifest — and shrinks as AWS DevOps Agent learns.</p>
+<p align="center">Start with AWS DevOps Agent the governed way — and have a home ready for every agent that comes after it.</p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT--0-yellow.svg" alt="License: MIT-0"></a>
@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <strong>Deploy once. Extend by dropping a manifest. Decommission as DevOps Agent learns.</strong>
+  <strong>One gateway. One catalog. One set of rules — for your first agent and your fiftieth.</strong>
 </p>
 
 > **Note:** This repository is currently a **design specification**. Implementation is planned — see [Roadmap](#roadmap). This will be a demo/sample application for learning purposes, not intended for production use.
@@ -45,18 +45,19 @@ An extensible AI platform blueprint built on [AWS DevOps Agent](https://docs.aws
 
 ## Why this sample
 
-Teams adopting AWS DevOps Agent face two practical questions:
+The most common blocker to adopting AI agents today isn't capability — it's **fear of mixing agents in the environment**: who owns them, what can they touch, how do you stop sprawl before it starts, and what happens to the custom glue when native features ship?
 
-1. **"It can't do X yet (e.g. open remediation PRs) — do we wait?"**
-2. **"If we build custom glue around it, does that glue become legacy debt when native features ship?"**
+This blueprint answers that for three situations:
 
-This blueprint answers both with a **single-account L2→L3 platform starter** — centralize tool access behind one gateway, stand up a governed capability catalog, adopt a clean agent-extension pattern — **designed to shrink as DevOps Agent grows**:
+| You are… | This blueprint gives you |
+|:--|:--|
+| **Adopting your first agent** (AWS DevOps Agent) | A governed starting point: one gateway, isolated write path, human-in-the-loop by construction — working out of the box with a cost-optimization reference implementation |
+| **Worried about the agents that come next** | A **capability catalog** where every future tool and agent lands the same governed way — manifest, owner, least-privilege IAM, declared retirement condition. Growth without sprawl |
+| **Already running agents or MCP servers** | An **add-on path**: register what you have (`external-repo` MCP servers, `external-agent` A2A agents) without redeploying or rewriting it — your existing investment joins the governed catalog as-is |
 
-- Custom capabilities plug in behind a single AgentCore Gateway via **drop-in manifests** — adding one never touches DevOps Agent
-- Every custom component declares its **retirement condition** — when DevOps Agent gains that skill natively, you flip `enabled: false` or remove one A2A connection. No re-architecture, ever
-- The shipped example — a **Remediation-PR Agent** that opens IaC pull requests before DevOps Agent can — is itself the first component scheduled for decommissioning
+And it is **designed to shrink as DevOps Agent grows**: every custom component declares the native capability that will retire it. Decommissioning is `enabled: false` or removing one A2A connection — never a re-architecture. Custom glue never becomes legacy debt.
 
-> **Design principle: Gateway is for tools. DevOps Agent is for judgment.**
+> **Design principle: Gateway is for tools. DevOps Agent is for judgment. Governance is for both.**
 
 ## How it works
 
@@ -111,7 +112,16 @@ DevOps Agent's extension surface is exactly two protocols — and the platform t
 
 **Rule of thumb:** "look something up" → MCP tool. "Go do something requiring judgment or a write" → A2A agent. Full decision guide in [docs/DESIGN.md](docs/DESIGN.md#mcp-vs-a2a-choosing-your-extension-type).
 
-MCP manifests support four types: `lambda` (your code), `awslabs-reuse` (upstream servers), `mcp-passthrough` (already-running endpoints), and `external-repo` — MCP servers that live in their own repository with their own deploy story, which this platform *registers* rather than deploys.
+### Bring your existing agents and tools
+
+Already have agents or MCP servers running? They join the catalog **without being redeployed or rewritten**:
+
+- **`type: external-repo`** (MCP) — an MCP server that lives in its own repository with its own deploy story. The blueprint *registers* it as a Gateway target (endpoint via SSM, auth handshake documented) — it doesn't deploy it
+- **`type: external-agent`** (A2A) — an agent you already operate (on AgentCore Runtime or elsewhere), registered as an A2A connection for DevOps Agent to delegate to
+
+The onboarding contract is the same for everything in the catalog: a manifest with an **owner**, **declared permissions**, and a **retirement condition** — reviewed as a git PR. That's what makes "more and more agents coming" a non-event instead of sprawl.
+
+Other MCP manifest types: `lambda` (your code, deployed by this blueprint) and `awslabs-reuse` (upstream servers).
 
 ## Cost-optimization reference implementation
 
@@ -225,7 +235,7 @@ The full rationale lives in **[docs/DESIGN.md](docs/DESIGN.md)**:
 - [ ] **M2 — Capability packs:** the five cost MCP targets (incl. awslabs reuse) + `external-repo` type with the OpenSearch pack
 - [ ] **M3 — Remediation-PR Agent:** Strands on AgentCore Runtime, A2A registration, `cdk validate` integration
 - [ ] **M4 — Scenarios:** break/fix workload + Makefile + walkthrough docs
-- [ ] **M5 — Hardening:** custom resources for post-deploy steps, `examples/s3-storage-class`, AWS-icon architecture diagram, cost estimate table
+- [ ] **M5 — Hardening:** custom resources for post-deploy steps, `examples/s3-storage-class`, optional AWS Agent Registry auto-publish, AWS-icon architecture diagram, cost estimate table
 - [ ] Verify: A2A finding payload shape · scheduled-agent-as-code via repo-imported skills · native PR capability scope (Phase-2 trigger)
 
 ## Cost estimate

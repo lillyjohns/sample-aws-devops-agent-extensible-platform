@@ -17,7 +17,7 @@ Agent governance needs two planes: one to **define** controls, one to **enforce*
 | Enterprise concept | This sample | Level |
 |---|---|---|
 | Policy engine / policy-as-code | The **manifest** is the policy: `readOnly: true` enforced at synth, per-target least-privilege IAM declared in-file, versioned tool names | ✅ |
-| Agent/tool registry & catalog | `capabilities/` directory **is** a lightweight catalog: every capability is a reviewable folder with an owner, a description, and a lifecycle | ✅ |
+| Agent/tool registry & catalog | Two planes: `capabilities/` in git is the **definition plane** (owner, permissions, lifecycle — reviewable, deployable); optional [AWS Agent Registry](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/registry.html) auto-publish adds the **discovery plane** (org-wide semantic search + approval workflow) | ✅ / 📄 |
 | Approval workflows & lifecycle | Git PR review = the approval workflow. Adding/retiring a capability is a reviewed commit. Retirement conditions are declared up front (`retirement:`) | ✅ |
 | Identity & access | SigV4 on the Gateway; per-target IAM roles; PR agent has its own isolated credential | ✅ |
 | Audit trail | CloudTrail + git history (every capability change is a commit) + DevOps Agent investigation timelines | ✅ |
@@ -33,6 +33,15 @@ Agent governance needs two planes: one to **define** controls, one to **enforce*
 | Guardrails | Model-level guardrails are DevOps Agent–managed; the structural guardrail here is **read-only tools + write-as-PR** | ✅ |
 | Human-in-the-loop | The PR **is** the HITL gate: every write lands as a proposal reviewed by a human (optionally pre-reviewed by DevOps Agent release readiness) | ✅ |
 | Outbound control on writes | The only write path (GitHub) is isolated in a dedicated agent with its own scoped secret — never on the shared Gateway | ✅ |
+
+## Onboarding existing agents (the add-on path)
+
+Organizations rarely start from zero. The blueprint accepts pre-existing investments **without redeploying them**:
+
+- **Existing MCP servers** → `type: external-repo` manifest: registered as Gateway targets; the owning repo keeps build/deploy
+- **Existing agents** → `type: external-agent` manifest: registered as A2A delegation targets with a declared **scope** (what DevOps Agent may ask of them)
+
+Either way, joining the catalog means accepting the same governance contract: manifest with an owner, declared permissions/scope, and a retirement condition — reviewed as a git PR. Existing agents keep their autonomy; the organization gains an auditable record that they exist, who owns them, and what they're allowed to do. That is the difference between "more agents coming" and agent sprawl.
 
 ## Anti-sprawl properties
 
