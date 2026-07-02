@@ -88,6 +88,80 @@ make break-scenario-2        # e.g. spin up idle NAT GW
 
 ---
 
+## The Gateway as a contract
+
+The Gateway endpoint is the **stable contract** between DevOps Agent and your tooling. DevOps Agent is registered to the Gateway **once**; everything behind it is pluggable.
+
+```
+DevOps Agent ──(registered once: AWS::DevOpsAgent::Service, never changes)──► AgentCore Gateway
+                                                                                │
+                                              targets added/removed/upgraded freely
+                                              (no DevOps Agent change, no console click)
+```
+
+### How it works
+
+1. **One-time binding (CDK):** a single `AWS::DevOpsAgent::Service` resource (`ServiceType: mcpserversigv4`) points DevOps Agent at the Gateway URL. This resource never changes after first deploy.
+
+2. **Pluggable targets — config-driven:** each MCP is a folder + manifest in the repo. CDK reads the directory and synthesizes one Gateway target per manifest:
+
+   ```
+   mcp-targets/
+     cost-explorer/       manifest.yaml              # type: awslabs-reuse
+     pricing/             manifest.yaml              # type: awslabs-reuse
+     find-cost-waste/     manifest.yaml + lambda/    # type: lambda
+     locate-iac-source/   manifest.yaml + lambda/    # type: lambda
+     generate-report/     manifest.yaml + lambda/    # type: lambda
+     examples/
+       s3-storage-class/  manifest.yaml + lambda/    # enabled: false — extensibility demo
+   ```
+
+   **Adding an MCP = drop a folder, `cdk deploy`.** That's the extensibility promise of the sample.
+
+3. **Discovery is handled by the platform:** the Gateway's semantic tool search means DevOps Agent (and every other client) finds new tools automatically. The tool *list* is not part of the contract — only the endpoint + auth are. The contract stays stable while capability grows.
+
+### Manifest schema (sketch)
+
+```yaml
+# mcp-targets/find-cost-waste/manifest.yaml
+name: find-cost-waste
+description: Detect idle/oversized resources (Compute Optimizer, Trusted Advisor, heuristics)
+type: lambda                # lambda | awslabs-reuse | mcp-passthrough
+enabled: true
+handler: lambda/handler.py  # for type: lambda
+# ref: <container/package ref>   # for type: awslabs-reuse
+# endpoint + auth               # for type: mcp-passthrough
+tools:
+  - name: find_cost_waste
+    version: 1              # breaking change ⇒ new tool name (find_cost_waste_v2)
+permissions:                # least-privilege IAM synthesized per target
+  - compute-optimizer:Get*
+  - trustedadvisor:Describe*
+  - ec2:Describe*
+readOnly: true              # write tools are rejected on the shared Gateway
+```
+
+### Contract rules
+
+- **Tool names + schemas are the API surface.** Additive changes are fine; breaking changes require a versioned tool name (`find_cost_waste_v2`).
+- **Every Gateway target is read-only by default.** The manifest's `readOnly: true` is enforced at synth time — write capabilities never join the shared Gateway (the PR agent's GitHub write path stays private to its runtime).
+- **Per-target least-privilege IAM**, declared in the manifest and synthesized by CDK.
+
+### Why route MCPs through the Gateway instead of registering each directly with DevOps Agent?
+
+DevOps Agent *can* register MCP servers directly — but per-MCP registration scales badly:
+
+| | Direct registration | Gateway as contract |
+|---|---|---|
+| Adding an MCP | Touches DevOps Agent config every time (N `DevOpsAgent::Service` resources) | Drop a folder, `cdk deploy` — DevOps Agent untouched |
+| Other clients (Kiro/Claude, PR agent, future agents) | Get nothing — benefits DevOps Agent only | Get every new tool for free |
+| Auth, throttling, audit | Per-MCP, scattered | One place |
+| OAuth-backed services | `AWS::DevOpsAgent::Service` **cannot** register them (console-only) | Gateway absorbs whatever auth each backend needs, presents uniform sigv4 upstream |
+
+> **Repo promise: "Deploy once. Extend by dropping a manifest."** The disabled `examples/s3-storage-class` target exists so the README can demonstrate “enable your 6th MCP in 2 minutes.”
+
+---
+
 ## Deployability: ~95% single `cdk deploy`
 
 CloudFormation now has first-class DevOps Agent resources ([`AWS::DevOpsAgent::*`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/AWS_DevOpsAgent.html)):
@@ -133,7 +207,9 @@ CloudFormation now has first-class DevOps Agent resources ([`AWS::DevOpsAgent::*
 - [ ] Verify scheduled SRE agent can be defined via Git-managed skills
 - [ ] Confirm exact scope of DevOps Agent native PR capability (which finding types) — affects Phase 2 timeline
 - [ ] Redraw diagram with official AWS architecture icons for the final sample
-- [ ] Repo structure + CDK stack breakdown
+- [ ] Repo structure + CDK stack breakdown (mcp-targets/ manifest convention defined — see "Gateway as a contract")
+- [ ] Build the manifest-driven CDK construct (directory scan → Gateway targets + per-target IAM)
+- [ ] Ship `examples/s3-storage-class` disabled target as the extensibility demo
 - [ ] Constrain Phase 1 IaC mapping to a known repo structure with tagged resources
 
 ## Repo contents (current)
