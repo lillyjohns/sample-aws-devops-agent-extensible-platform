@@ -1,0 +1,28 @@
+name: generate-report
+description: Generate a cost report as a spreadsheet-friendly artifact in S3 and return a presigned URL
+type: lambda
+enabled: true
+owner: platform-team
+handler: lambda/handler.py
+retirement: >
+  Decommission if AWS DevOps Agent gains native artifact/report generation.
+tools:
+  - name: generate_cost_report
+    description: >
+      Generate a cost report (CSV) covering the last N days of spend grouped by
+      service, upload it to S3, and return a presigned download URL valid for 1 hour.
+      Works for every Gateway client: chat, IDE, or scheduled agents.
+    inputSchema:
+      type: object
+      properties:
+        days:
+          type: integer
+          description: "Lookback window in days (default 30, max 365)"
+        group_by:
+          type: string
+          description: "Cost Explorer dimension to group by (default SERVICE)"
+          enum: [SERVICE, LINKED_ACCOUNT, USAGE_TYPE, REGION]
+      required: []
+permissions:
+  - ce:GetCostAndUsage
+readOnly: true

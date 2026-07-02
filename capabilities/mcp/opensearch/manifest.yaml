@@ -1,0 +1,11 @@
+name: opensearch
+description: Query OpenSearch clusters (logs/search analytics) during investigations
+type: external-repo
+enabled: false   # opt-in: deploy the external repo first, then set the SSM parameter
+owner: platform-team
+source: https://github.com/lillyjohns/devopsagent-opensearch-mcp
+endpoint:
+  ssmParameter: /platform/mcp/opensearch/endpoint
+retirement: >
+  Decommission if AWS DevOps Agent gains native OpenSearch/log-analytics tooling.
+readOnly: true

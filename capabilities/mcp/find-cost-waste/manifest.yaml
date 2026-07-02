@@ -1,0 +1,36 @@
+name: find-cost-waste
+description: Detect idle and oversized resources (Compute Optimizer, Trusted Advisor cost checks, idle-resource heuristics)
+type: lambda
+enabled: true
+owner: platform-team
+handler: lambda/handler.py
+retirement: >
+  Decommission if AWS DevOps Agent gains native idle-resource detection.
+tools:
+  - name: find_cost_waste
+    description: >
+      Scan the account for cost waste: idle NAT gateways (low bytes processed),
+      unattached EBS volumes, gp2 volumes eligible for gp3 migration, and
+      Compute Optimizer over-provisioned EC2 findings. Returns a list of findings
+      with resource ARNs and estimated monthly waste in USD.
+    inputSchema:
+      type: object
+      properties:
+        checks:
+          type: array
+          description: "Which checks to run. Default: all."
+          items:
+            type: string
+            enum: [idle_nat_gateways, unattached_ebs, gp2_volumes, overprovisioned_ec2]
+        region:
+          type: string
+          description: "Region to scan. Default: the platform region."
+      required: []
+permissions:
+  - compute-optimizer:GetEC2InstanceRecommendations
+  - compute-optimizer:GetEBSVolumeRecommendations
+  - ec2:DescribeNatGateways
+  - ec2:DescribeVolumes
+  - ec2:DescribeInstances
+  - cloudwatch:GetMetricStatistics
+readOnly: true
