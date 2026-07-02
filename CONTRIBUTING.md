@@ -15,16 +15,17 @@ When filing an issue, please check existing open, or recently closed, issues to 
 - Any modifications you've made relevant to the bug
 - Anything unusual about your environment or deployment
 
-## Contributing a new MCP target (capability pack)
+## Contributing a new capability pack
 
-The fastest way to contribute is a new Gateway capability:
+The fastest way to contribute is a new capability:
 
-1. Create a folder under `mcp-targets/<your-target>/`
+1. Create a folder under `capabilities/mcp/<your-target>/` (tool-shaped) or `capabilities/a2a/<your-agent>/` (agent-shaped) — see the [MCP vs A2A decision guide](docs/DESIGN.md#mcp-vs-a2a-choosing-your-extension-type)
 2. Add a `manifest.yaml` following the schema in [docs/DESIGN.md](docs/DESIGN.md)
-3. Keep it **read-only** (`readOnly: true` is enforced at synth time)
+3. MCP targets must be **read-only** (`readOnly: true` is enforced at synth time); write paths belong in A2A agents with isolated credentials
 4. Declare least-privilege IAM permissions in the manifest
-5. Include a short README in the folder explaining the tools it exposes and its **retirement condition** (when native DevOps Agent capability would make it obsolete)
+5. Include a short README in the folder explaining what it exposes and its **retirement condition** (when native DevOps Agent capability would make it obsolete)
 6. Ship it with `enabled: false` unless it belongs in the default deployment
+7. MCP servers living in their own repo? Use `type: external-repo` — this platform registers them, it doesn't deploy them
 
 ## Contributing via Pull Requests
 

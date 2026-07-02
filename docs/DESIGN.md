@@ -6,6 +6,7 @@ This document contains the full design rationale for the platform. For the overv
 
 - [Design principles](#design-principles)
 - [The Gateway as a contract](#the-gateway-as-a-contract)
+- [MCP vs A2A: choosing your extension type](#mcp-vs-a2a-choosing-your-extension-type)
 - [Manifest schema](#manifest-schema)
 - [Contract rules](#contract-rules)
 - [Gateway routing vs direct MCP registration](#gateway-routing-vs-direct-mcp-registration)
@@ -38,16 +39,39 @@ DevOps Agent ──(registered once: AWS::DevOpsAgent::Service, never changes)�
 ```
 
 1. **One-time binding (CDK):** a single `AWS::DevOpsAgent::Service` resource (`ServiceType: mcpserversigv4`) points DevOps Agent at the Gateway URL. This resource never changes after first deploy.
-2. **Pluggable targets — config-driven:** each MCP is a folder + manifest under `mcp-targets/`. CDK scans the directory and synthesizes one Gateway target per manifest. **Adding an MCP = drop a folder, `cdk deploy`.**
+2. **Pluggable targets — config-driven:** each MCP is a folder + manifest under `capabilities/mcp/`. CDK scans the directory and synthesizes one Gateway target per manifest. **Adding an MCP = drop a folder, `cdk deploy`.**
 3. **Discovery is handled by the platform:** the Gateway's semantic tool search means DevOps Agent (and every other client) finds new tools automatically. The tool *list* is not part of the contract — only the endpoint + auth are.
+
+## MCP vs A2A: choosing your extension type
+
+AWS DevOps Agent's extension surface is exactly two protocols — **MCP** (tools) and **A2A** (agents). This platform treats both as first-class capability types under `capabilities/`:
+
+```
+capabilities/
+├── mcp/      # tool-shaped: stateless calls, routed through the shared Gateway
+└── a2a/      # agent-shaped: the callee itself reasons; registered with DevOps Agent
+```
+
+| | MCP capability | A2A capability |
+|---|---|---|
+| Shape | Deterministic tool — the *caller* reasons over results | Autonomous agent — the *callee* reasons (multi-step, stateful) |
+| Routing | Behind the shared AgentCore Gateway | Direct A2A registration with DevOps Agent |
+| Credentials | Per-target least-privilege IAM, read-only | Own isolated credentials (may hold write access) |
+| Who benefits | Every Gateway client (DevOps Agent, IDEs, other agents) | The delegating agent only |
+| Example here | `find_cost_waste`, `locate_iac_source` | Remediation-PR Agent |
+| Rule of thumb | "Look something up / compute something" | "Go do something that requires judgment or a write" |
+
+**Decision test:** if the capability needs to make multiple dependent decisions, hold its own credentials, or perform writes — it's an A2A agent. Otherwise make it an MCP tool; tools are cheaper, safer, and shared by all clients.
+
+Both types share the same lifecycle philosophy: manifest, owner, declared retirement condition, retirable by config.
 
 ## Manifest schema
 
 ```yaml
-# mcp-targets/find-cost-waste/manifest.yaml
+# capabilities/mcp/find-cost-waste/manifest.yaml
 name: find-cost-waste
 description: Detect idle/oversized resources (Compute Optimizer, Trusted Advisor, heuristics)
-type: lambda                # lambda | awslabs-reuse | mcp-passthrough
+type: lambda                # lambda | awslabs-reuse | mcp-passthrough | external-repo
 enabled: true
 handler: lambda/handler.py  # for type: lambda
 # ref: <container/package ref>   # for type: awslabs-reuse
@@ -63,6 +87,30 @@ permissions:                # least-privilege IAM synthesized per target
   - ec2:Describe*
 readOnly: true              # write tools are rejected on the shared Gateway
 ```
+
+### `type: external-repo` — referencing independently-deployed MCP servers
+
+Real-world MCP servers often live in their own repositories with their own deployment stories (awslabs servers, internal team repos). The platform does not *deploy* these — it *registers* them as Gateway targets and documents the handshake:
+
+```yaml
+# capabilities/mcp/opensearch/manifest.yaml
+name: opensearch
+description: Query OpenSearch clusters (logs/search analytics) during investigations
+type: external-repo
+enabled: false              # opt-in: requires the external deploy first
+source: https://github.com/lillyjohns/devopsagent-opensearch-mcp
+deploy: agentcore           # deployed by ITS repo's mechanism, not this one
+endpoint:
+  ssmParameter: /platform/mcp/opensearch/endpoint   # filled after external deploy
+auth: cognito-jwt
+retirement: >
+  Decommission if AWS DevOps Agent gains native OpenSearch/log-analytics tooling.
+readOnly: true
+```
+
+Contract for external repos: the external repo owns build/deploy/upgrade; this platform owns registration, auth handshake (endpoint + credentials via SSM/Secrets Manager), and lifecycle (enable/retire). This mirrors how DevOps Agent itself imports skills from external repositories.
+
+The shipped `opensearch` pack doubles as the proof that the manifest system works for a **second domain** beyond cost — with zero new tool code in this repo.
 
 ## Contract rules
 
@@ -94,7 +142,9 @@ Selection criteria for what belongs behind the Gateway:
 | `find_cost_waste` | custom Lambda | One purposeful tool wrapping Compute Optimizer + Trusted Advisor cost checks + idle-resource heuristics (NAT GW bytes, unattached EBS, gp2 inventory) | Native idle-resource detection |
 | `locate_iac_source` | custom Lambda | **Resource ARN → owning IaC block** (tags + Resource Explorer + scoped read-only repo search). The hardest problem in the sample, promoted to a first-class tool | Native IaC state awareness |
 | `generate_cost_report` | custom Lambda | xlsx (openpyxl) → S3 → presigned URL, available to every client | Native artifact generation |
-| *(optional)* DevOps Agent MCP endpoint | passthrough | `start_investigation` / `get_investigation_status` for the single-endpoint IDE story | — |
+| `opensearch` | external-repo, disabled by default | Log/search analytics from an independently-deployed [OpenSearch MCP server](https://github.com/lillyjohns/devopsagent-opensearch-mcp); proves the second-domain story | Native OpenSearch tooling |
+
+**Documented option (not shipped):** registering DevOps Agent's own MCP endpoint (`start_investigation`, `get_investigation_status`) as a Gateway passthrough target for the single-endpoint IDE story — see [Entry points](#entry-points-and-ide-wiring). Kept out of the default deployment to avoid circular-routing confusion in a sample.
 
 **Deliberately NOT behind the Gateway:**
 
@@ -122,6 +172,9 @@ Kiro/Claude → Gateway alone gets **raw tools only** — no DevOps Agent judgme
 | CDK-only (no parallel Terraform implementation) | CDK + Terraform dual-ship; platform CDK + workload Terraform | One language, one toolchain, one `deploy.sh`. The manifest-driven Gateway construct is a CDK construct — that's where the effort belongs. Mixed-IaC repos confuse the clone-and-deploy experience. Terraform is a documented extension path (see below). |
 | CLI break/fix instead of web dashboard | Interactive dashboard like the networking demo | Less code to maintain, fits the DevOps audience, keeps focus on the agent pattern rather than UI. |
 | Platform-first framing, cost as reference implementation | Pure cost-optimization sample; pure generic framework | A pure cost sample buries the reusable machinery; a pure framework isn't demoable. Cost is the "demo cartridge" that proves the platform in 15 minutes. |
+| `capabilities/{mcp,a2a}/` — A2A as a first-class type | PR agent as a one-off under `agents/` | DevOps Agent's extension surface is exactly MCP + A2A; a platform sample should teach the *choice* between them, not just showcase one instance. |
+| Governance as docs + structural mechanisms, not machinery | Implementing policy engine, eval pipelines, multi-account governance | Pillars get pages, not pipelines. Manifest-as-policy + git-as-approval-workflow are real mechanisms; faking Cedar/evals in a sample would be worse than pointing at AgentCore Policy/Evaluations. See [GOVERNANCE.md](GOVERNANCE.md). |
+| OpenSearch as the external-repo example | Inventing a second toy domain | An [independently-deployed, working MCP server](https://github.com/lillyjohns/devopsagent-opensearch-mcp) proves the second-domain + external-repo story with zero new tool code. |
 
 ## Terraform notes
 

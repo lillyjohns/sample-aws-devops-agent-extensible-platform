@@ -26,7 +26,9 @@ An extensible AI platform blueprint built on [AWS DevOps Agent](https://docs.aws
 - [How it works](#how-it-works)
 - [Architecture](#architecture)
 - [Two lifecycle mechanisms](#two-lifecycle-mechanisms)
+- [Capability types: MCP and A2A](#capability-types-mcp-and-a2a)
 - [Cost-optimization reference implementation](#cost-optimization-reference-implementation)
+- [Governance](#governance)
 - [Entry points](#entry-points)
 - [Demo walkthrough](#demo-walkthrough)
 - [Deployability](#deployability)
@@ -48,7 +50,7 @@ Teams adopting AWS DevOps Agent face two practical questions:
 1. **"It can't do X yet (e.g. open remediation PRs) — do we wait?"**
 2. **"If we build custom glue around it, does that glue become legacy debt when native features ship?"**
 
-This blueprint answers both with a platform that is **designed to shrink as DevOps Agent grows**:
+This blueprint answers both with a **single-account L2→L3 platform starter** — centralize tool access behind one gateway, stand up a governed capability catalog, adopt a clean agent-extension pattern — **designed to shrink as DevOps Agent grows**:
 
 - Custom capabilities plug in behind a single AgentCore Gateway via **drop-in manifests** — adding one never touches DevOps Agent
 - Every custom component declares its **retirement condition** — when DevOps Agent gains that skill natively, you flip `enabled: false` or remove one A2A connection. No re-architecture, ever
@@ -85,7 +87,7 @@ This blueprint answers both with a platform that is **designed to shrink as DevO
 
 The platform's extensibility story in two moves:
 
-**➕ Add a capability** — drop a folder with a `manifest.yaml` under `mcp-targets/`, run `cdk deploy`. The CDK construct scans the directory, synthesizes the Gateway target and least-privilege IAM. DevOps Agent and every other client discover the new tools automatically via semantic search. No DevOps Agent config change, no console click.
+**➕ Add a capability** — drop a folder with a `manifest.yaml` under `capabilities/mcp/`, run `cdk deploy`. The CDK construct scans the directory, synthesizes the Gateway target and least-privilege IAM. DevOps Agent and every other client discover the new tools automatically via semantic search. No DevOps Agent config change, no console click.
 
 **➖ Retire a capability** — every manifest declares its retirement condition:
 
@@ -95,6 +97,21 @@ retirement: >
 ```
 
 When that day comes: `enabled: false`, `cdk deploy`. Same mechanism retires the Remediation-PR Agent (deregister its A2A connection) when native PR support ships. **Custom glue never becomes legacy debt.**
+
+## Capability types: MCP and A2A
+
+DevOps Agent's extension surface is exactly two protocols — and the platform treats both as first-class, manifest-driven capability types:
+
+| | `capabilities/mcp/` | `capabilities/a2a/` |
+|:--|:--|:--|
+| Shape | Tool — the **caller** reasons | Agent — the **callee** reasons |
+| Routing | Shared AgentCore Gateway (SigV4) | A2A registration with DevOps Agent |
+| Credentials | Read-only, least-privilege, per target | Own isolated credentials (may write) |
+| Example | `find_cost_waste`, `locate_iac_source` | Remediation-PR Agent |
+
+**Rule of thumb:** "look something up" → MCP tool. "Go do something requiring judgment or a write" → A2A agent. Full decision guide in [docs/DESIGN.md](docs/DESIGN.md#mcp-vs-a2a-choosing-your-extension-type).
+
+MCP manifests support four types: `lambda` (your code), `awslabs-reuse` (upstream servers), `mcp-passthrough` (already-running endpoints), and `external-repo` — MCP servers that live in their own repository with their own deploy story, which this platform *registers* rather than deploys.
 
 ## Cost-optimization reference implementation
 
@@ -107,8 +124,20 @@ The platform ships with cost optimization as its worked example — inherently p
 | `find_cost_waste` | custom Lambda | Compute Optimizer + Trusted Advisor + idle heuristics in one purposeful tool |
 | `locate_iac_source` | custom Lambda | **Resource ARN → owning IaC block** — the capability DevOps Agent lacks today |
 | `generate_cost_report` | custom Lambda | xlsx → S3 presigned URL, for every client (chat, IDE, scheduled) |
+| `opensearch` *(disabled)* | external-repo | Second-domain proof: registers an [independently-deployed OpenSearch MCP server](https://github.com/lillyjohns/devopsagent-opensearch-mcp) — zero new tool code |
 
 Deliberately **not** on the Gateway: CloudWatch/CloudTrail (DevOps Agent has them natively) and GitHub **write** credentials (isolated in the PR agent — a shared write path would let any IDE client open PRs). Rationale in [docs/DESIGN.md](docs/DESIGN.md).
+
+## Governance
+
+The platform covers the enterprise agent-platform pillars at sample scale — **structural mechanisms, not machinery**:
+
+- **Policy-as-code:** the manifest — `readOnly` enforced at synth, least-privilege IAM per target, versioned tools, declared retirement conditions
+- **Registry & catalog:** `capabilities/` is a reviewable, git-owned tool/agent catalog; adding or retiring a capability is a reviewed PR
+- **Enforcement plane:** one authenticated Gateway entry point; writes isolated to one agent; every write lands as a human-reviewed PR (HITL by design)
+- **Anti-sprawl:** no shadow tools (capability ⇔ folder in git), no integration chaos (one Gateway, one protocol), no cost blindness (per-capability cost tags + dashboard)
+
+The full pillar-by-pillar mapping — including what's deliberately **out of scope** (multi-account, multi-tenancy, eval pipelines) and the graduation path to the enterprise reference architecture — is in **[docs/GOVERNANCE.md](docs/GOVERNANCE.md)**.
 
 ## Entry points
 
@@ -155,25 +184,28 @@ Planned layout (see [Roadmap](#roadmap)):
 
 ```
 .
-├── platform/                  # the reusable core
-│   ├── lib/                   #   CDK stacks: Gateway, DevOps Agent binding, A2A bridge slot
-│   └── constructs/            #   manifest-driven McpTargets construct
-├── mcp-targets/               # drop-in capability packs
-│   ├── cost-explorer/         #   manifest.yaml (awslabs reuse)
-│   ├── pricing/               #   manifest.yaml (awslabs reuse)
-│   ├── find-cost-waste/       #   manifest.yaml + lambda/
-│   ├── locate-iac-source/     #   manifest.yaml + lambda/
-│   ├── generate-report/       #   manifest.yaml + lambda/
-│   └── examples/
-│       └── s3-storage-class/  #   enabled: false — the "add your 6th MCP in 2 minutes" demo
-├── agents/
-│   └── remediation-pr/        # Phase-1 A2A bridge agent (Strands) — decommissionable
-├── scenarios/                 # break/fix demo workload + Makefile
+├── platform/                    # the reusable core
+│   ├── lib/                     #   CDK stacks: Gateway, DevOps Agent binding, A2A slot
+│   └── constructs/              #   manifest-driven Capabilities construct
+├── capabilities/                # drop-in capability packs (the catalog)
+│   ├── mcp/                     #   tool-shaped → shared Gateway
+│   │   ├── cost-explorer/       #     awslabs reuse
+│   │   ├── pricing/             #     awslabs reuse
+│   │   ├── find-cost-waste/     #     manifest.yaml + lambda/
+│   │   ├── locate-iac-source/   #     manifest.yaml + lambda/
+│   │   ├── generate-report/     #     manifest.yaml + lambda/
+│   │   ├── opensearch/          #     external-repo, enabled: false
+│   │   └── examples/
+│   │       └── s3-storage-class/ #    the "write your own Lambda target" tutorial
+│   └── a2a/                     #   agent-shaped → A2A registration
+│       └── remediation-pr/      #     Strands agent — decommissionable by design
+├── scenarios/                   # break/fix demo workload + Makefile
 ├── docs/
-│   ├── DESIGN.md              # full design rationale & decision log
-│   └── architecture.dot       # diagram source (graphviz)
+│   ├── DESIGN.md                # design rationale & decision log
+│   ├── GOVERNANCE.md            # pillar mapping, scope boundaries, graduation path
+│   └── architecture.dot         # diagram source (graphviz)
 └── scripts/
-    └── deploy.sh              # cdk deploy + post-deploy wire-up
+    └── deploy.sh                # cdk deploy + post-deploy wire-up
 ```
 
 ## Design deep-dive
@@ -190,7 +222,7 @@ The full rationale lives in **[docs/DESIGN.md](docs/DESIGN.md)**:
 ## Roadmap
 
 - [ ] **M1 — Platform core:** manifest-driven `McpTargets` CDK construct, Gateway stack, DevOps Agent binding (`AgentSpace` + `Service`)
-- [ ] **M2 — Cost pack:** the five MCP targets, incl. awslabs server reuse
+- [ ] **M2 — Capability packs:** the five cost MCP targets (incl. awslabs reuse) + `external-repo` type with the OpenSearch pack
 - [ ] **M3 — Remediation-PR Agent:** Strands on AgentCore Runtime, A2A registration, `cdk validate` integration
 - [ ] **M4 — Scenarios:** break/fix workload + Makefile + walkthrough docs
 - [ ] **M5 — Hardening:** custom resources for post-deploy steps, `examples/s3-storage-class`, AWS-icon architecture diagram, cost estimate table
