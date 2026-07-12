@@ -24,7 +24,7 @@ Resources:
     Properties:
       AvailabilityZone: !Ref AvailabilityZone
       Size: 100
-      VolumeType: gp2
+      VolumeType: gp3
       Tags:
         - Key: Project
           Value: devops-sample-poc
