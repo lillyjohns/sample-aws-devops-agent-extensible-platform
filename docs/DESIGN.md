@@ -24,8 +24,8 @@ This document contains the full design rationale for the platform. For the overv
 2. **Designed to shrink.**
    Every custom component declares its **retirement condition** — the native DevOps Agent capability that makes it obsolete. Decommissioning is a config change (`enabled: false` or deregistering an A2A connection), never a re-architecture. Custom glue should never become legacy debt.
 
-3. **Read-only by default. Writes are isolated.**
-   All Gateway targets are read-only (enforced at synth time). The only write path — GitHub PRs — lives in a dedicated agent with its own credentials, and every write lands as a *proposal* (a PR) gated by human review.
+3. **Read-only by default. Writes are proposals.**
+   Every Gateway target is read-only toward the AWS environment (enforced at synth time). The only write shape the platform accepts is a **human-gated proposal**: the shipped `propose_fix_pr` tool can only open a PR from a fixed transform registry, declared in its manifest via `externalWrite: {gate: human-review}` — the validator rejects anything else. Autonomous/free-form writes belong in dedicated A2A agents with isolated credentials.
 
 ## The Gateway as a contract
 
@@ -171,7 +171,22 @@ Selection criteria for what belongs behind the Gateway:
 **Deliberately NOT behind the Gateway:**
 
 - **CloudWatch / CloudTrail / logs MCPs** — DevOps Agent investigates with these natively; duplicating them adds cost and tool-selection confusion for zero new capability.
-- **GitHub write access** — write credentials on a shared Gateway would let any connected IDE client silently open PRs. Write stays a *private* capability of the Remediation-PR Agent (own runtime, own secret). Least privilege by architecture; the Gateway exposes read-only `locate_iac_source` instead.
+- **Raw GitHub write access** — a general-purpose GitHub write credential on a shared Gateway would let any connected IDE client push arbitrary changes. What *is* behind the Gateway is `propose_fix_pr`: a deliberately narrow write whose only possible output is a **pull request built from a fixed transform registry** — a proposal that changes nothing until a human merges it (see "The PR function: tool vs agent" below). Free-form or autonomous write remains a *private* capability of a dedicated A2A agent (own runtime, own secret).
+
+### The PR function: tool vs agent (why the live demo ships a Lambda tool)
+
+The remediation-PR function could be built two ways, and the repo models both:
+
+| | `capabilities/mcp/propose-fix-pr` (shipped, enabled) | `capabilities/a2a/remediation-pr-agent` (example, disabled) |
+|---|---|---|
+| Shape | Deterministic tool: fixed transform registry, one file, one PR | Autonomous agent: locates IaC across repos, synthesizes patches, iterates on review feedback |
+| Reasoning | All in DevOps Agent (which fix, per which runbook) | Partly in the callee |
+| Infra | One Lambda behind the existing Gateway | Own runtime (e.g. AgentCore Runtime) + A2A registration |
+| Write blast radius | One enum of approved transforms; output is always a human-gated PR | Fine-grained but broader; agent holds repo credentials |
+
+Applying the decision test: the demo fix (gp2→gp3 in a known file) needs **no multi-step judgment in the callee** — the runbook names the transform, the tool executes it. That's tool-shaped. The Lambda tool is simpler and cheaper (no second runtime), and sits on the **same governance surface** as every other capability: manifest with owner + retirement, synth-time validation, catalog-derived allowlist, least-privilege credential. The manifest's `externalWrite` block makes the write explicit and machine-checked: `gate: human-review` is the only value the validator accepts, and the credential must resolve from SSM — never inline.
+
+The A2A manifest stays in the repo as the **graduation path**: when remediation outgrows deterministic transforms (multi-repo IaC discovery, non-trivial patch synthesis), promote the function to an agent and retire the tool — both moves are manifest edits.
 
 **Curated tools over raw API mirrors:** fewer, purposeful tools (`find_cost_waste` vs three raw APIs) improve LLM tool selection. Reusing awslabs MCP servers (Cost Explorer, Pricing) shows composition over reinvention.
 
@@ -202,7 +217,7 @@ Caveats: preview service; publish step is likely a CFN custom resource calling t
 | A2A sub-agent for PR work (not EventBridge handoff) | Structured recommendation events on EventBridge | A2A makes decommissioning literally "remove one connection". EventBridge handoff would work but is a weaker upgrade story. |
 | Excel reporting as a Gateway MCP tool | Client-side generation in Claude cowork | Behind the Gateway, *every* client gets it (scheduled agents included); client-side means reports only exist when a human with Claude asks. |
 | Curated MCP tools over raw API mirrors | One MCP target per AWS API | Fewer, purposeful tools improve LLM tool selection; awslabs reuse shows composition over reinvention. |
-| GitHub write creds private to PR agent | GitHub read/write MCP on the shared Gateway | Anyone connected to the Gateway could open PRs. Read-only IaC lookup is shared; the write path is isolated with its own secret. |
+| PR function as a Gateway Lambda tool with a declared `externalWrite` contract | Full A2A Remediation-PR Agent (own runtime); raw GitHub read/write MCP on the Gateway | The demo fix is deterministic (runbook names the transform) — tool-shaped by our own decision test. Same governance surface, no second runtime. A raw write MCP would let any Gateway client push arbitrary changes; `propose_fix_pr` can only emit human-gated PRs from an approved transform enum. The A2A manifest ships disabled as the graduation path. |
 | CDK-only (no parallel Terraform implementation) | CDK + Terraform dual-ship; platform CDK + workload Terraform | One language, one toolchain, one `deploy.sh`. The manifest-driven Gateway construct is a CDK construct — that's where the effort belongs. Mixed-IaC repos confuse the clone-and-deploy experience. Terraform is a documented extension path (see below). |
 | CLI break/fix instead of web dashboard | Interactive dashboard like the networking demo | Less code to maintain, fits the DevOps audience, keeps focus on the agent pattern rather than UI. |
 | Platform-first framing, cost as reference implementation | Pure cost-optimization sample; pure generic framework | A pure cost sample buries the reusable machinery; a pure framework isn't demoable. Cost is the "demo cartridge" that proves the platform in 15 minutes. |

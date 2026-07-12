@@ -30,9 +30,9 @@ Agent governance needs two planes: one to **define** controls, one to **enforce*
 |---|---|---|
 | Inbound gateway (auth, rate limits) | AgentCore Gateway: SigV4 auth, one audited entry point for **all** clients (DevOps Agent, IDEs, PR agent) | ✅ |
 | Runtime orchestration | DevOps Agent (judgment) + AgentCore Runtime (PR agent) | ✅ |
-| Guardrails | Model-level guardrails are DevOps Agent–managed; the structural guardrail here is **read-only tools + write-as-PR** | ✅ |
+| Guardrails | Model-level guardrails are DevOps Agent–managed; the structural guardrail here is **read-only tools + write-as-proposal** | ✅ |
 | Human-in-the-loop | The PR **is** the HITL gate: every write lands as a proposal reviewed by a human (optionally pre-reviewed by DevOps Agent release readiness) | ✅ |
-| Outbound control on writes | The only write path (GitHub) is isolated in a dedicated agent with its own scoped secret — never on the shared Gateway | ✅ |
+| Outbound control on writes | The only write path (`propose_fix_pr`) is declared in its manifest (`externalWrite`), machine-checked at synth (`gate: human-review` is the only accepted value, credential must resolve from SSM), limited to a fixed transform registry, and scoped to one SecureString the construct grants explicitly. Autonomous writes graduate to a dedicated A2A agent with isolated credentials (example manifest ships disabled) | ✅ |
 
 ## Onboarding existing agents (the add-on path)
 

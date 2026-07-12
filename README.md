@@ -199,6 +199,110 @@ logic. Swap the demo event pattern for a real source (Cost Anomaly Detection
 via SNS→EventBridge, CloudWatch alarm state changes) without touching the
 Lambda. Judgment stays in DevOps Agent; runbooks keep it *governed* judgment.
 
+### Finding → runbook → pull request (live today)
+
+The write path of the loop is deployed and working — the full
+"cost waste found → approved procedure → fix proposed as a PR" story:
+
+```bash
+python3 scripts/nl_chat.py --agent-space <id> --message \
+  "We found a gp2 EBS volume defined in scenarios/demo-workload/template.yaml. \
+   Consult the runbook and open a PR to fix it."
+# → DevOps Agent calls search_runbook → finds 'gp2 to gp3 EBS Volume Migration'
+# → the runbook says: fix it in the IaC via propose_fix_pr, never in the console
+# → DevOps Agent calls propose_fix_pr (change_description: ebs-gp2-to-gp3)
+# → a real GitHub PR appears against scenarios/demo-workload/template.yaml
+# → a human reviews the diff + the attached finding, and merges
+```
+
+Executed live against this repo: the agent consulted the runbook and opened
+[PR #1](https://github.com/lillyjohns/sample-aws-devops-agent-governance-blueprint/pull/1)
+— gp2→gp3 diff, finding JSON in the body, left open for human review.
+
+Three governance properties make this write path acceptable on a shared platform:
+
+1. **Write-as-proposal.** The tool cannot change any environment — it can only
+   *propose* a change as a PR. The merge button is the human-in-the-loop gate.
+2. **Deterministic transforms only.** The diff comes from a fixed registry keyed
+   by `change_description` (`ebs-gp2-to-gp3`); the tool refuses anything not in
+   the registry. The agent supplies the judgment (*what* to fix, per the
+   runbook); the tool executes an approved change. Adding a new transform is a
+   reviewed git PR, like every capability change.
+3. **Declared, scoped credential.** The manifest declares the write in the open
+   (`externalWrite: {system: github, gate: human-review}`) — the synth-time
+   validator rejects any manifest whose gate isn't `human-review`. The GitHub
+   token is a fine-grained PAT in an SSM SecureString; the construct grants the
+   Lambda read access to exactly that one parameter. It never appears in git,
+   in the template, or on the shared Gateway.
+
+The demo target is [`scenarios/demo-workload/`](scenarios/demo-workload/) — a
+deliberately wasteful CFN template (gp2 volume, oversized instance) that serves
+as the source-of-truth IaC. It is never deployed by the blueprint; the point is
+the IaC-level fix.
+
+## Retiring a capability (live walkthrough)
+
+"Designed to shrink" is a mechanism here, not a slogan — this walkthrough was
+executed against the live deployment. `propose-fix-pr` declares its exit
+condition up front:
+
+```yaml
+retirement: >
+  Retire when AWS DevOps Agent gains native PR-creation for cost findings —
+  this tool exists only to close the propose-fix loop until then.
+```
+
+When that day comes, retirement is a one-line config change (or
+`make retire-diff CAP=propose-fix-pr` / `make retire` / `make restore`):
+
+```yaml
+# capabilities/mcp/propose-fix-pr/manifest.yaml
+enabled: false
+```
+
+`cdk diff` shows the platform shrinking — the Gateway target, the Lambda, its
+IAM (including the scoped SSM token grant), *and* the Agent Space allowlist
+entry all leave together, because the allowlist is derived from the catalog at
+synth time and can never drift from it:
+
+```text
+Stack GovernanceBlueprint-Platform
+Resources
+[-] AWS::IAM::Role Capabilities/propose-fix-pr-fn/ServiceRole destroy
+[-] AWS::IAM::Policy Capabilities/propose-fix-pr-fn/ServiceRole/DefaultPolicy destroy
+[-] AWS::Lambda::Function Capabilities/propose-fix-pr-fn destroy
+[-] AWS::Lambda::Permission Capabilities/propose-fix-pr-fn/propose-fix-pr-gateway-invoke destroy
+[-] AWS::BedrockAgentCore::GatewayTarget Capabilities/propose-fix-pr-target destroy
+
+Outputs
+[~] Output EnabledCapabilities: {"Value":"find-cost-waste, generate-report, propose-fix-pr, search-runbook"}
+                            to {"Value":"find-cost-waste, generate-report, search-runbook"}
+
+Stack GovernanceBlueprint-DevOpsAgent
+[~] AWS::DevOpsAgent::Association GatewayAssociation
+ └─ [~] Configuration.MCPServerSigV4.Tools
+     └─ @@ -2,6 +2,5 @@
+        [ ]   "x_amz_bedrock_agentcore_search",
+        [ ]   "find-cost-waste___find_cost_waste",
+        [ ]   "generate-report___generate_cost_report",
+        [-]   "propose-fix-pr___propose_fix_pr",
+        [ ]   "search-runbook___search_runbook"
+```
+
+After `cdk deploy`, the live Gateway confirms it (verified via a SigV4
+`tools/list` call):
+
+```text
+['find-cost-waste___find_cost_waste', 'generate-report___generate_cost_report',
+ 'search-runbook___search_runbook', 'x_amz_bedrock_agentcore_search']
+propose_fix_pr present: False
+```
+
+No re-architecture, no orphaned IAM, no stale allowlist entry, no console
+visit. The reverse (`enabled: true`, deploy) restores it just as cleanly —
+which is how this repo was left. The same one-move retirement applies to A2A
+capabilities: deregistering the connection *is* the decommission.
+
 ## Deployability
 
 Target: **single `cdk deploy`** (~95% today, tracked in [Roadmap](#roadmap)).
@@ -208,7 +312,7 @@ Target: **single `cdk deploy`** (~95% today, tracked in [Roadmap](#roadmap)).
 | Agent Space, account association | ✅ [`AWS::DevOpsAgent::AgentSpace`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-devopsagent-agentspace.html) / [`Association`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/AWS_DevOpsAgent.html) |
 | Gateway registered as MCP server in DevOps Agent | ✅ [`AWS::DevOpsAgent::Service`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-devopsagent-service.html) (`mcpserversigv4`) |
 | AgentCore Gateway, targets, Runtime; workload; alarms; webhook Lambda | ✅ CDK |
-| GitHub credentials for the PR agent | ✅ Secrets Manager (seeded by script) — deliberately **not** DevOps Agent's OAuth GitHub integration, which [cannot be provisioned via CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-devopsagent-service.html) |
+| GitHub credential for `propose_fix_pr` | ✅ SSM SecureString (`/governance-blueprint/github-token`, seeded once via `aws ssm put-parameter`) — deliberately **not** DevOps Agent's OAuth GitHub integration, which [cannot be provisioned via CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-devopsagent-service.html) |
 | Webhook + auth, A2A registration, scheduled agent definition | ⚠️ post-deploy script/console — custom-resource candidates (June 2026 Asset APIs + repo-importable skills look promising) |
 
 ## Testing
@@ -233,10 +337,13 @@ The E2E script reads the Gateway URL from the CloudFormation outputs — no conf
 [PASS] generate_cost_report returns downloadable CSV
 [PASS] search_runbook ranks the NAT gateway runbook first — 'Idle NAT Gateway Remediation' score=5.5
 [PASS] search_runbook include_content returns full markdown
+[PASS] gp2 runbook instructs the agent to use propose_fix_pr
+[PASS] propose_fix_pr dry_run returns the gp2→gp3 diff without opening a PR — 1 replacement(s), no PR opened
+[PASS] propose_fix_pr rejects unapproved change_description
 [PASS] planted EBS volume detected as waste — vol-09a4ae5e174e41588
        cleaned up vol-09a4ae5e174e41588
 
-10 passed, 0 failed
+13 passed, 0 failed
 ```
 
 ## Project structure
