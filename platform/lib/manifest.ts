@@ -20,6 +20,12 @@ export interface McpCapabilityManifest {
   handler?: string; // type: lambda — relative path to handler file within the capability dir
   runtime?: string; // optional lambda runtime override
   endpoint?: { ssmParameter?: string; url?: string }; // external-repo / mcp-passthrough
+  /**
+   * type: lambda — optional read-only data pack. `dir` (relative to the capability
+   * directory) is seeded to a dedicated S3 bucket at deploy; the bucket name is
+   * injected into the Lambda via `envVar`. The Lambda gets read-only access.
+   */
+  data?: { dir: string; envVar: string };
   source?: string; // external-repo — the owning repository
   retirement?: string;
   tools?: ToolDef[];
@@ -80,5 +86,8 @@ function validate(m: McpCapabilityManifest, file: string): void {
   }
   if (m.type === 'lambda' && m.enabled && (!m.tools || m.tools.length === 0)) {
     throw new Error(`${file}: type 'lambda' requires at least one tool definition`);
+  }
+  if (m.data && (!m.data.dir || !m.data.envVar)) {
+    throw new Error(`${file}: 'data' requires both 'dir' and 'envVar'`);
   }
 }

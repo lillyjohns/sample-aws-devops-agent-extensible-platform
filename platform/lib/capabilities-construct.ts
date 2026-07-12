@@ -2,12 +2,22 @@ import * as cdk from 'aws-cdk-lib';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as agentcore from 'aws-cdk-lib/aws-bedrockagentcore';
 import { Construct } from 'constructs';
 import * as path from 'path';
 import { loadMcpManifests, McpCapabilityManifest } from './manifest';
 import { MCP_SERVER_NAME, MAX_COMBINED_TOOL_NAME } from './constants';
+
+/** GatewayTarget Description has a hard 200-char limit (learned via CFN validation failure). */
+const MAX_TARGET_DESCRIPTION = 200;
+function clampDescription(s: string): string {
+  const oneLine = s.replace(/\s+/g, ' ').trim();
+  return oneLine.length <= MAX_TARGET_DESCRIPTION
+    ? oneLine
+    : oneLine.slice(0, MAX_TARGET_DESCRIPTION - 1) + '\u2026';
+}
 
 export interface CapabilitiesProps {
   /** Absolute path to the capabilities/ directory. */
@@ -90,16 +100,38 @@ export class Capabilities extends Construct {
       this.toolNames.push(`${m.name}___${t.name}`);
     }
 
+    const exclude = ['manifest.yaml', 'README.md'];
+    if (m.data) exclude.push(m.data.dir, `${m.data.dir}/**`);
+
     const fn = new lambda.Function(this, `${m.name}-fn`, {
       functionName: `gov-blueprint-${m.name}`,
       runtime: lambda.Runtime.PYTHON_3_13,
       handler: (m.handler ?? 'lambda/handler.py').replace(/\.py$/, '').replace(/\//g, '.') + '.handler',
-      code: lambda.Code.fromAsset(m.dir, { exclude: ['manifest.yaml', 'README.md'] }),
+      code: lambda.Code.fromAsset(m.dir, { exclude }),
       timeout: cdk.Duration.seconds(60),
       memorySize: 512,
       description: m.description,
       environment: { ARTIFACT_BUCKET: this.artifactBucket.bucketName },
     });
+
+    // Optional data pack: seed the capability's docs (e.g. runbooks) to a
+    // dedicated bucket and grant the Lambda read-only access. The data ships
+    // with the capability folder — same drop-a-folder lifecycle as the code.
+    if (m.data) {
+      const dataBucket = new s3.Bucket(this, `${m.name}-data`, {
+        blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+        encryption: s3.BucketEncryption.S3_MANAGED,
+        enforceSSL: true,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+        autoDeleteObjects: true,
+      });
+      new s3deploy.BucketDeployment(this, `${m.name}-data-seed`, {
+        sources: [s3deploy.Source.asset(path.join(m.dir, m.data.dir))],
+        destinationBucket: dataBucket,
+      });
+      dataBucket.grantRead(fn);
+      fn.addEnvironment(m.data.envVar, dataBucket.bucketName);
+    }
 
     // Exception to the read-only contract: tools may write artifacts to the
     // platform's own scratch bucket (presigned-URL delivery). Environment
@@ -115,7 +147,7 @@ export class Capabilities extends Construct {
     const target = new agentcore.CfnGatewayTarget(this, `${m.name}-target`, {
       gatewayIdentifier: gateway.attrGatewayIdentifier,
       name: m.name,
-      description: `${m.description}${m.retirement ? ` | Retirement: ${m.retirement.trim()}` : ''}`,
+      description: clampDescription(`${m.description}${m.retirement ? ` | Retirement: ${m.retirement.trim()}` : ''}`),
       targetConfiguration: {
         mcp: {
           lambda: {
@@ -158,7 +190,7 @@ export class Capabilities extends Construct {
     const target = new agentcore.CfnGatewayTarget(this, `${m.name}-target`, {
       gatewayIdentifier: gateway.attrGatewayIdentifier,
       name: m.name,
-      description: `${m.description}${m.source ? ` | Source: ${m.source}` : ''}${m.retirement ? ` | Retirement: ${m.retirement.trim()}` : ''}`,
+      description: clampDescription(`${m.description}${m.source ? ` | Source: ${m.source}` : ''}${m.retirement ? ` | Retirement: ${m.retirement.trim()}` : ''}`),
       targetConfiguration: {
         mcp: {
           mcpServer: { endpoint },

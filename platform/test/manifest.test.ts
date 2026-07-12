@@ -106,6 +106,24 @@ describe('manifest governance contract', () => {
     const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'gov-blueprint-empty-'));
     expect(loadMcpManifests(empty)).toEqual([]);
   });
+
+  test('accepts a data pack with dir and envVar', () => {
+    const ok = VALID + `
+data:
+  dir: runbooks
+  envVar: RUNBOOK_BUCKET
+`;
+    const manifests = loadMcpManifests(makeCapability(ok));
+    expect(manifests[0].data).toEqual({ dir: 'runbooks', envVar: 'RUNBOOK_BUCKET' });
+  });
+
+  test('rejects a data pack missing envVar', () => {
+    const bad = VALID + `
+data:
+  dir: runbooks
+`;
+    expect(() => loadMcpManifests(makeCapability(bad))).toThrow(/'data' requires both/);
+  });
 });
 
 describe('repo capability manifests', () => {
@@ -113,15 +131,25 @@ describe('repo capability manifests', () => {
 
   test('all real manifests in the repo pass the governance gate', () => {
     const manifests = loadMcpManifests(repoCapabilities);
-    expect(manifests.length).toBeGreaterThanOrEqual(3);
+    expect(manifests.length).toBeGreaterThanOrEqual(4);
     for (const m of manifests) {
       expect(m.readOnly).toBe(true);
     }
   });
 
-  test('find-cost-waste and generate-report are enabled', () => {
+  test('find-cost-waste, generate-report, and search-runbook are enabled', () => {
     const manifests = loadMcpManifests(repoCapabilities);
     const enabled = manifests.filter((m) => m.enabled).map((m) => m.name);
-    expect(enabled).toEqual(expect.arrayContaining(['find-cost-waste', 'generate-report']));
+    expect(enabled).toEqual(
+      expect.arrayContaining(['find-cost-waste', 'generate-report', 'search-runbook'])
+    );
+  });
+
+  test('search-runbook declares its runbook data pack and no IAM beyond it', () => {
+    const manifests = loadMcpManifests(repoCapabilities);
+    const runbook = manifests.find((m) => m.name === 'search-runbook')!;
+    expect(runbook.data).toEqual({ dir: 'runbooks', envVar: 'RUNBOOK_BUCKET' });
+    expect(runbook.permissions ?? []).toHaveLength(0); // S3 read is granted by the construct
+    expect(fs.existsSync(path.join(runbook.dir, 'runbooks'))).toBe(true);
   });
 });

@@ -1,0 +1,35 @@
+name: search-runbook
+description: Search operational runbooks (markdown in S3) for remediation guidance during investigations
+type: lambda
+enabled: true
+owner: platform-team
+handler: lambda/handler.py
+data:
+  dir: runbooks              # seeded to a per-capability S3 data bucket at deploy
+  envVar: RUNBOOK_BUCKET
+retirement: >
+  Decommission if AWS DevOps Agent gains native runbook/knowledge-base retrieval
+  (e.g. Agent Space document attachments or a managed knowledge store).
+tools:
+  - name: search_runbook
+    description: >
+      Search the team's operational runbooks for remediation guidance. Returns the
+      best-matching runbook documents with title, S3 key, relevance score, and a
+      matched excerpt. Set include_content=true to get the full markdown of each
+      match. Use this after identifying an issue (e.g. an idle NAT gateway or a
+      cost anomaly) to find the approved remediation procedure before proposing a fix.
+    inputSchema:
+      type: object
+      properties:
+        query:
+          type: string
+          description: "Keywords describing the issue, e.g. 'idle NAT gateway' or 'cost anomaly spike'"
+        max_results:
+          type: integer
+          description: "Maximum number of runbooks to return (default 3)"
+        include_content:
+          type: boolean
+          description: "If true, include the full markdown content of each matched runbook (default false)"
+      required: [query]
+permissions: []
+readOnly: true
