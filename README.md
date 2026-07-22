@@ -367,7 +367,7 @@ Planned layout (see [Roadmap](#roadmap)):
 │   │   └── examples/
 │   │       └── s3-storage-class/ #    the "write your own Lambda target" tutorial
 │   └── a2a/                     #   agent-shaped → A2A registration
-│       └── remediation-pr/      #     Strands agent — decommissionable by design
+│       └── remediation-pr-agent/ #    minimal A2A agent — decommissionable by design
 ├── scenarios/                   # break/fix demo workload + Makefile
 │   └── alert-glue/              #   EventBridge alert → DevOps Agent chat (deployed by Scenarios stack)
 ├── docs/
@@ -393,10 +393,10 @@ The full rationale lives in **[docs/DESIGN.md](docs/DESIGN.md)**:
 
 - [x] **M1 — Platform core:** manifest-driven `Capabilities` CDK construct (synth-time governance validation), Gateway stack, DevOps Agent binding (`AgentSpace` + `Service` + `Association` with tool allowlist) — **deployed & verified in ap-northeast-1, 100% CloudFormation, zero console steps**
 - [ ] **M2 — Capability packs:** `find_cost_waste` ✅, `generate_cost_report` ✅, `search_runbook` ✅ (live, tested through the Gateway); remaining: awslabs reuse packaging (Cost Explorer, Pricing), `locate_iac_source`, OpenSearch endpoint wiring
-- [ ] **M3 — Remediation-PR Agent:** Strands on AgentCore Runtime, A2A registration, `cdk validate` integration
+- [x] **M3 — Remediation-PR Agent:** minimal A2A agent on AgentCore Runtime (CodeConfiguration zip, no container), `remoteagentsigv4` registration + association via a `Custom::DevOpsAgentRemoteAgent` custom resource (the CFN Service/Association types don't cover remote agents yet) — **deployed & A2A-verified in ap-northeast-1** (`scripts/a2a_smoke.py`, [docs/a2a-evidence.md](docs/a2a-evidence.md)). Known gap: chat executions don't surface a delegation tool for `remoteagentsigv4` associations yet (service-side; evidence §3)
 - [ ] **M4 — Scenarios:** alert → investigation glue ✅ (Scenarios stack: EventBridge → CreateChat/SendMessage, `scripts/trigger_alert.py`); remaining: break/fix workload + Makefile + walkthrough docs
 - [ ] **M5 — Hardening:** custom resources for post-deploy steps, `examples/s3-storage-class`, optional AWS Agent Registry auto-publish, AWS-icon architecture diagram, cost estimate table
-- [ ] Verify: A2A finding payload shape · scheduled-agent-as-code via repo-imported skills · native PR capability scope (Phase-2 trigger)
+- [ ] Verify: A2A finding payload shape ✅ (NL text + embedded JSON finding — [docs/a2a-evidence.md](docs/a2a-evidence.md)) · NL delegation from chat once the orchestrator surfaces remote-agent tools · scheduled-agent-as-code via repo-imported skills · native PR capability scope (Phase-2 trigger)
 
 ## Cost estimate
 
