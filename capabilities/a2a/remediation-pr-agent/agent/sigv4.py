@@ -23,6 +23,9 @@ def _credentials():
     if time.time() < _creds_cache["expiry"] - 120:
         return _creds_cache["creds"]
     uri = os.environ.get("AWS_CONTAINER_CREDENTIALS_FULL_URI")
+    rel = os.environ.get("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI")
+    if not uri and rel:
+        uri = "http://169.254.170.2" + rel
     if uri:
         headers = {}
         token = os.environ.get("AWS_CONTAINER_AUTHORIZATION_TOKEN")
@@ -37,11 +40,46 @@ def _credentials():
         creds = (d["AccessKeyId"], d["SecretAccessKey"], d.get("Token"))
         _creds_cache.update(creds=creds, expiry=time.time() + 900)
         return creds
-    return (
-        os.environ["AWS_ACCESS_KEY_ID"],
-        os.environ["AWS_SECRET_ACCESS_KEY"],
-        os.environ.get("AWS_SESSION_TOKEN"),
-    )
+    if "AWS_ACCESS_KEY_ID" in os.environ:
+        return (
+            os.environ["AWS_ACCESS_KEY_ID"],
+            os.environ["AWS_SECRET_ACCESS_KEY"],
+            os.environ.get("AWS_SESSION_TOKEN"),
+        )
+    imds = _imds_credentials()
+    if imds:
+        _creds_cache.update(creds=imds, expiry=time.time() + 900)
+        return imds
+    aws_env = sorted(k for k in os.environ if k.startswith("AWS_"))
+    raise RuntimeError(f"no credentials found; AWS_* env: {aws_env}")
+
+
+def _imds_credentials():
+    """IMDSv2 instance-role credentials (AgentCore Runtime data plane)."""
+    base = "http://169.254.169.254"
+    try:
+        tok_req = urllib.request.Request(
+            base + "/latest/api/token", method="PUT",
+            headers={"X-aws-ec2-metadata-token-ttl-seconds": "3600"},
+        )
+        with urllib.request.urlopen(tok_req, timeout=3) as r:
+            token = r.read().decode()
+        hdrs = {"X-aws-ec2-metadata-token": token}
+        with urllib.request.urlopen(
+            urllib.request.Request(base + "/latest/meta-data/iam/security-credentials/", headers=hdrs),
+            timeout=3,
+        ) as r:
+            role = r.read().decode().strip().split("\n")[0]
+        with urllib.request.urlopen(
+            urllib.request.Request(
+                base + f"/latest/meta-data/iam/security-credentials/{role}", headers=hdrs
+            ),
+            timeout=3,
+        ) as r:
+            d = json.loads(r.read())
+        return (d["AccessKeyId"], d["SecretAccessKey"], d.get("Token"))
+    except Exception:
+        return None
 
 
 def _sign(key, msg):
