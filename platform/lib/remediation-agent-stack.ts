@@ -144,7 +144,10 @@ export class RemediationAgentStack extends cdk.Stack {
     });
     invokeRole.addToPolicy(
       new iam.PolicyStatement({
-        actions: ['bedrock-agentcore:InvokeAgentRuntime'],
+        // GetAgentCard: RegisterService validates the registration by fetching
+        // the agent card THROUGH this role (observed: sigv4McpServerSession
+        // assumed-role session gets 403 without it).
+        actions: ['bedrock-agentcore:InvokeAgentRuntime', 'bedrock-agentcore:GetAgentCard'],
         resources: [runtime.attrAgentRuntimeArn, `${runtime.attrAgentRuntimeArn}/*`],
       })
     );

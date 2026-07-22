@@ -31,13 +31,22 @@ def _client():
 
 
 def _endpoint(props):
-    """AgentCore Runtime A2A data-plane URL for the runtime ARN."""
+    """Agent-card URL for the runtime ARN.
+
+    RegisterService validates by GETting the endpoint as-is (no path appended)
+    and expects the agent card there — so we register the card URL; A2A
+    clients then follow the card's `url` field to the POST /invocations
+    endpoint (standard A2A discovery).
+    """
     if props.get("Endpoint"):
         return props["Endpoint"]
     arn = props["RuntimeArn"]
     region = arn.split(":")[3]
     escaped = urllib.parse.quote(arn, safe="")
-    return f"https://bedrock-agentcore.{region}.amazonaws.com/runtimes/{escaped}/invocations/"
+    return (
+        f"https://bedrock-agentcore.{region}.amazonaws.com/runtimes/{escaped}"
+        "/invocations/.well-known/agent-card.json"
+    )
 
 
 def _create(props):
